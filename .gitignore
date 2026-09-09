@@ -1,0 +1,19 @@
+# local data / build artifacts
+data/
+*.db
+*.db-shm
+*.db-wal
+cairn
+cairn.exe
+/app
+dist/
+
+# editor / tooling
+.claude/
+.idea/
+.vscode/
+*.log
+
+# env
+.env
+.env.local
