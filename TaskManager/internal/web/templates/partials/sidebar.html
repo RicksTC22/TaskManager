@@ -1,0 +1,31 @@
+{{define "sidebar"}}
+<aside class="sidebar">
+  <nav class="side-group">
+    <a href="/list?due=today" class="side-link">Today</a>
+    <a href="/list?due=overdue" class="side-link">Overdue</a>
+    <a href="/list?view=notes" class="side-link">All notes</a>
+    <a href="/list?view=tasks" class="side-link">All tasks</a>
+  </nav>
+
+  <div class="side-group">
+    <h3>Projects</h3>
+    {{range .Projects}}
+    <a href="/projects/{{.Slug}}" class="side-link">{{.Name}} <span class="side-count">{{.Count}}</span></a>
+    {{else}}
+    <p class="side-empty">None yet</p>
+    {{end}}
+    <form class="side-add" method="post" action="/projects">
+      <input type="text" name="name" placeholder="New project…" aria-label="New project name">
+    </form>
+  </div>
+
+  {{if .Tags}}
+  <div class="side-group">
+    <h3>Tags</h3>
+    <div class="side-tags">
+      {{range .Tags}}<a href="/tags/{{.Name}}" class="chip chip-tag">#{{.Name}} <span>{{.Count}}</span></a>{{end}}
+    </div>
+  </div>
+  {{end}}
+</aside>
+{{end}}

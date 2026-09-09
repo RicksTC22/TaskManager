@@ -1,0 +1,26 @@
+{{define "content"}}
+<section class="pane narrow">
+  <h1>Search</h1>
+  <form method="get" action="/search" hx-get="/search" hx-target="#results" hx-swap="outerHTML"
+        hx-trigger="input changed delay:250ms, search">
+    <input type="search" name="q" value="{{.Query}}" autofocus placeholder="Search titles and notes…"
+           aria-label="Search">
+  </form>
+  {{template "results" .}}
+</section>
+{{end}}
+
+{{define "results"}}
+<div id="results">
+  {{if .Query}}
+    {{if .Results}}
+    <p class="count">{{len .Results}} match{{if ne (len .Results) 1}}es{{end}}</p>
+    <ul class="rows">
+      {{range .Results}}{{template "task-row" (dict "E" .)}}{{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No matches for “{{.Query}}”.</p>
+    {{end}}
+  {{end}}
+</div>
+{{end}}

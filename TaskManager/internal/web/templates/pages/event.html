@@ -1,0 +1,56 @@
+{{define "content"}}
+{{$e := .E}}
+<article class="entry">
+  <header class="entry-head">
+    <h1>{{if $e.Title}}{{$e.Title}}{{else}}(untitled event){{end}}</h1>
+    <a class="btn" href="{{if .Back}}{{.Back}}{{else}}/calendar{{end}}">Back to calendar</a>
+  </header>
+
+  <form class="entry-edit" method="post" action="/events/{{$e.ID}}">
+    <input class="edit-title" type="text" name="title" value="{{$e.Title}}" placeholder="Title">
+
+    <div class="edit-fields">
+      <label>Calendar
+        <select name="calendar_id">
+          {{range .Calendars}}{{if ne .Kind "tasks"}}
+          <option value="{{.ID}}" {{if eq .ID $e.CalendarID}}selected{{end}}>{{.Name}}</option>
+          {{end}}{{end}}
+        </select>
+      </label>
+      <label>Date
+        <input type="date" name="date" value="{{$e.Start.Format "2006-01-02"}}">
+      </label>
+      <label class="check-inline">
+        <input type="checkbox" name="all_day" {{if $e.AllDay}}checked{{end}}> All day
+      </label>
+      <label>Start
+        <input type="time" name="start_time" value="{{$e.Start.Format "15:04"}}">
+      </label>
+      <label>End
+        <input type="time" name="end_time" value="{{$e.End.Format "15:04"}}">
+      </label>
+    </div>
+
+    <div class="edit-fields">
+      <label style="flex:1">Location
+        <input type="text" name="location" value="{{$e.Location}}">
+      </label>
+      <label style="flex:1">Repeat (RRULE)
+        <input type="text" name="rrule" value="{{$e.RRule}}" placeholder="FREQ=WEEKLY;BYDAY=MO,WE">
+      </label>
+    </div>
+
+    <textarea class="edit-body" name="description" rows="6" placeholder="Notes">{{$e.Description}}</textarea>
+
+    <div class="edit-actions">
+      <button type="submit" class="btn primary">Save</button>
+      <a class="btn" href="/calendar">Cancel</a>
+      <button type="submit" class="btn danger" formaction="/events/{{$e.ID}}/delete"
+              data-confirm="Delete this event?">Delete</button>
+    </div>
+  </form>
+
+  {{if $e.RRule}}<p class="muted">Repeats: <code>{{$e.RRule}}</code>. Editing changes the whole series.</p>{{end}}
+  {{if eq $e.Source "import"}}<p class="muted">Imported from {{if $e.Calendar}}{{$e.Calendar.SourceName}}{{end}}. Re-importing the file will overwrite changes.</p>{{end}}
+</article>
+{{end}}

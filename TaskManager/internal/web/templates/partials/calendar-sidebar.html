@@ -1,0 +1,63 @@
+{{define "cal-sidebar"}}
+<aside class="sidebar cal-sidebar">
+  <div class="side-group">
+    <h3>Calendars</h3>
+    {{$view := .View}}
+    {{$anchor := .Nav.Anchor.Format "2006-01-02"}}
+    {{range .Calendars}}
+    <label class="cal-toggle">
+      <input type="checkbox" {{if .Visible}}checked{{end}}
+             hx-post="/calendars/{{.ID}}/visible"
+             hx-vals='{"visible": "{{if .Visible}}0{{else}}1{{end}}", "view": "{{$view}}", "date": "{{$anchor}}"}'
+             hx-target="#calendar" hx-swap="outerHTML">
+      <span class="cal-swatch" style="background:{{.Color}}"></span>
+      <span class="cal-name">{{.Name}}</span>
+      <span class="side-count">{{if eq .Kind "tasks"}}⌁{{else}}{{.EventCount}}{{end}}</span>
+    </label>
+    {{end}}
+  </div>
+
+  <div class="side-group">
+    <form class="side-add" method="post" action="/calendars">
+      <input type="text" name="name" placeholder="New calendar…" aria-label="New calendar name">
+    </form>
+  </div>
+
+  <div class="side-group">
+    <h3>Import .ics</h3>
+    <form class="cal-import" method="post" action="/calendars/import" enctype="multipart/form-data">
+      <input type="file" name="file" accept=".ics,text/calendar" required>
+      <select name="calendar_id" aria-label="Import into">
+        <option value="new">New calendar</option>
+        {{range .Calendars}}{{if ne .Kind "tasks"}}<option value="{{.ID}}">Add to “{{.Name}}”</option>{{end}}{{end}}
+      </select>
+      <button type="submit" class="btn">Import</button>
+    </form>
+  </div>
+
+  <div class="side-group">
+    <h3>Manage</h3>
+    {{range .Calendars}}{{if not .IsDefault}}
+    <details class="cal-edit">
+      <summary><span class="cal-swatch" style="background:{{.Color}}"></span> {{.Name}}</summary>
+      <form method="post" action="/calendars/{{.ID}}" class="cal-editform">
+        <input type="text" name="name" value="{{.Name}}" aria-label="Calendar name">
+        <div class="cal-colors">
+          {{$cur := .Color}}
+          {{range $.Colors}}
+          <label class="cal-colorpick" style="background:{{.}}">
+            <input type="radio" name="color" value="{{.}}" {{if eq . $cur}}checked{{end}}>
+          </label>
+          {{end}}
+        </div>
+        <div class="cal-editactions">
+          <button type="submit" class="btn primary">Save</button>
+          <button type="submit" class="btn danger" formaction="/calendars/{{.ID}}/delete"
+                  data-confirm="Delete “{{.Name}}” and its events?">Delete</button>
+        </div>
+      </form>
+    </details>
+    {{end}}{{end}}
+  </div>
+</aside>
+{{end}}

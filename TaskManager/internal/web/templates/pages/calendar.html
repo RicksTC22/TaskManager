@@ -1,0 +1,155 @@
+{{define "content"}}
+<div class="cal-layout">
+  {{template "cal-sidebar" .}}
+  <section class="cal-main">
+    {{template "calendar" .}}
+  </section>
+</div>
+{{end}}
+
+
+{{define "calendar"}}
+<div id="calendar" class="calendar" data-view="{{.View}}" data-anchor="{{.Nav.Anchor.Format "2006-01-02"}}">
+  <div class="cal-toolbar">
+    <div class="cal-nav">
+      <a class="btn" href="/calendar?view={{.View}}&date={{.Nav.Today}}">Today</a>
+      <a class="btn icon" href="/calendar?view={{.View}}&date={{.Nav.Prev}}" aria-label="Previous">‹</a>
+      <a class="btn icon" href="/calendar?view={{.View}}&date={{.Nav.Next}}" aria-label="Next">›</a>
+      <h1 class="cal-heading">{{.Nav.Heading}}</h1>
+    </div>
+    <div class="cal-views">
+      <a href="/calendar?view=month&date={{.Nav.Anchor.Format "2006-01-02"}}" class="{{if eq .View "month"}}on{{end}}">Month</a>
+      <a href="/calendar?view=week&date={{.Nav.Anchor.Format "2006-01-02"}}" class="{{if eq .View "week"}}on{{end}}">Week</a>
+      <a href="/calendar?view=day&date={{.Nav.Anchor.Format "2006-01-02"}}" class="{{if eq .View "day"}}on{{end}}">Day</a>
+    </div>
+  </div>
+
+  {{if eq .View "month"}}{{template "cal-month" .}}{{else}}{{template "cal-grid" .}}{{end}}
+</div>
+{{end}}
+
+
+{{define "cal-chip"}}
+{{- /* . is an Occurrence */ -}}
+{{if eq .Kind "task"}}
+<a class="cal-chip task {{if .Done}}done{{end}} pri-l{{.Priority}}" style="--c:{{.Color}}"
+   href="/e/{{.Ref}}" draggable="true" data-kind="task" data-ref="{{.Ref}}" title="{{.Title}}">
+  <span class="dot"></span>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}
+</a>
+{{else}}
+<a class="cal-chip" style="--c:{{.Color}}"
+   href="/events/{{.Ref}}" draggable="true" data-kind="event" data-ref="{{.Ref}}"
+   title="{{.Title}} — {{.CalendarName}}">
+  <span class="dot"></span>{{if not .AllDay}}<b>{{.Start.Format "3:04"}}</b> {{end}}{{if .Title}}{{.Title}}{{else}}(untitled){{end}}
+</a>
+{{end}}
+{{end}}
+
+
+{{define "cal-month"}}
+<div class="cal-month">
+  <div class="cal-weekdays">
+    <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+  </div>
+  <div class="cal-grid-month">
+    {{$view := .View}}
+    {{range .Weeks}}
+    <div class="cal-week">
+      {{range .}}
+      <div class="cal-day {{if not .InMonth}}muted{{end}} {{if .Today}}today{{end}}" data-date="{{.Date.Format "2006-01-02"}}">
+        <div class="cal-daynum">
+          <a href="/calendar?view=day&date={{.Date.Format "2006-01-02"}}">{{.Date.Day}}</a>
+        </div>
+        <div class="cal-daybody">
+          {{$count := len .Occurrences}}
+          {{range $i, $o := .Occurrences}}
+            {{if lt $i 4}}{{template "cal-chip" $o}}{{end}}
+          {{end}}
+          {{if gt $count 4}}<a class="cal-more" href="/calendar?view=day&date={{.Date.Format "2006-01-02"}}">+{{sub $count 4}} more</a>{{end}}
+        </div>
+        <form class="cal-quickadd" method="post" action="/events"
+              hx-post="/events" hx-target="#calendar" hx-swap="outerHTML">
+          <input type="hidden" name="date" value="{{.Date.Format "2006-01-02"}}">
+          <input type="hidden" name="all_day" value="1">
+          <input type="hidden" name="view" value="{{$view}}">
+          <input type="text" name="title" placeholder="+ event" aria-label="Add event on {{.Date.Format "Jan 2"}}">
+        </form>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+
+{{define "cal-grid"}}
+<div class="cal-timegrid-wrap">
+  <div class="cal-timegrid" style="--days:{{len .Grid}}">
+    <div class="cal-gutter">
+      <div class="cal-allday-label">all-day</div>
+      {{range .Hours}}<div class="cal-hour"><span>{{.}}</span></div>{{end}}
+    </div>
+    <div class="cal-cols">
+      <div class="cal-colheads">
+        {{range .Grid}}
+        <a class="cal-colhead {{if .Today}}today{{end}}" href="/calendar?view=day&date={{.Date.Format "2006-01-02"}}">
+          <span class="dow">{{.Date.Format "Mon"}}</span> <span class="dom">{{.Date.Format "2"}}</span>
+        </a>
+        {{end}}
+      </div>
+      <div class="cal-allday-row">
+        {{range .Grid}}
+        <div class="cal-allday-cell" data-date="{{.Date.Format "2006-01-02"}}">
+          {{range .AllDay}}{{template "cal-chip" .}}{{end}}
+        </div>
+        {{end}}
+      </div>
+      <div class="cal-daycols">
+        {{range .Grid}}
+        <div class="cal-daycol {{if .Today}}today{{end}}" data-date="{{.Date.Format "2006-01-02"}}">
+          {{range $.Hours}}<div class="cal-slot"></div>{{end}}
+          {{range .Timed}}
+          <a class="cal-event" style="--c:{{.Color}}; top:{{printf "%.3f" .TopPct}}%; height:{{printf "%.3f" .HeightPct}}%; left:{{printf "%.2f" (lanePct .Lane .Lanes)}}%; width:{{printf "%.2f" (widthPct .Lanes)}}%;"
+             href="/events/{{.Ref}}" draggable="true" data-kind="event" data-ref="{{.Ref}}">
+            <b>{{.StartLabel}}</b> {{if .Title}}{{.Title}}{{else}}(untitled){{end}}
+          </a>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+
+<details class="cal-addevent">
+  <summary class="btn">+ New event</summary>
+  {{template "event-form" .}}
+</details>
+{{end}}
+
+
+{{define "event-form"}}
+<form class="eventform" method="post" action="/events" hx-post="/events" hx-target="#calendar" hx-swap="outerHTML"
+      hx-on::after-request="if(event.detail.successful) this.closest('details').removeAttribute('open')">
+  <input type="hidden" name="view" value="{{.View}}">
+  <input type="hidden" name="date" class="ef-date" value="{{.Nav.Anchor.Format "2006-01-02"}}">
+  <div class="ef-row">
+    <input type="text" name="title" placeholder="Title" required>
+    <select name="calendar_id">
+      {{range .Calendars}}{{if ne .Kind "tasks"}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
+    </select>
+  </div>
+  <div class="ef-row">
+    <label>Date <input type="date" name="date" value="{{.Nav.Anchor.Format "2006-01-02"}}"></label>
+    <label class="check-inline"><input type="checkbox" name="all_day"> All day</label>
+    <label>Start <input type="time" name="start_time" value="09:00"></label>
+    <label>End <input type="time" name="end_time" value="10:00"></label>
+  </div>
+  <div class="ef-row">
+    <input type="text" name="location" placeholder="Location (optional)">
+    <input type="text" name="rrule" placeholder="Repeat, e.g. FREQ=WEEKLY;BYDAY=MO (optional)">
+  </div>
+  <button type="submit" class="btn primary">Add event</button>
+</form>
+{{end}}

@@ -1,0 +1,92 @@
+{{define "chips"}}
+{{- /* expects an *Entry as . */ -}}
+{{if .Due}}<span class="chip {{dueClass .Due}}">{{dateLabel .Due}}</span>{{end}}
+{{if .Priority}}<span class="chip {{priorityClass .Priority}}">{{priorityLabel .Priority}}</span>{{end}}
+{{if .Project}}<a class="chip chip-project" href="/projects/{{.Project.Slug}}">{{.Project.Name}}</a>{{end}}
+{{range .Tags}}<a class="chip chip-tag" href="/tags/{{.}}">#{{.}}</a>{{end}}
+{{end}}
+
+
+{{define "task-card"}}
+{{- $e := .E -}}
+<article class="card pri-l{{$e.Priority}}{{if $e.Pinned}} pinned{{end}}"
+         draggable="true" data-slug="{{$e.Slug}}" data-status="{{$e.Status}}">
+  <div class="card-top">
+    <form method="post" action="/e/{{$e.Slug}}/toggle" hx-post="/e/{{$e.Slug}}/toggle"
+          hx-target="#board" hx-swap="outerHTML"
+          hx-vals='{"from": "board", "project": "{{.PS}}"}'
+          class="check" data-no-drag>
+      <button type="submit" class="tickbox {{if eq $e.Status "done"}}ticked{{end}}"
+              aria-label="Toggle done">{{if eq $e.Status "done"}}✓{{end}}</button>
+    </form>
+    <a class="card-title" href="/e/{{$e.Slug}}">{{if $e.Title}}{{$e.Title}}{{else}}(untitled){{end}}</a>
+  </div>
+  {{if or $e.Due $e.Priority $e.Project $e.Tags}}
+  <div class="card-chips">{{template "chips" $e}}</div>
+  {{end}}
+  {{if $e.Children}}
+  <div class="card-sub">☑ {{doneCount $e.Children}}/{{len $e.Children}}</div>
+  {{end}}
+</article>
+{{end}}
+
+
+{{define "task-row"}}
+{{- $e := .E -}}
+<li class="row pri-l{{$e.Priority}}" id="row-{{$e.Slug}}">
+  {{if $e.IsTask}}
+  <form method="post" action="/e/{{$e.Slug}}/toggle" hx-post="/e/{{$e.Slug}}/toggle"
+        hx-target="#row-{{$e.Slug}}" hx-swap="outerHTML" class="check">
+    <button type="submit" class="tickbox {{if eq $e.Status "done"}}ticked{{end}}"
+            aria-label="Toggle done">{{if eq $e.Status "done"}}✓{{end}}</button>
+  </form>
+  {{else}}
+  <span class="rowdot" aria-hidden="true">·</span>
+  {{end}}
+  <a class="row-title {{if eq $e.Status "done"}}done{{end}}" href="/e/{{$e.Slug}}">
+    {{if $e.Title}}{{$e.Title}}{{else}}(untitled){{end}}
+  </a>
+  <span class="row-chips">
+    {{if $e.IsTask}}<span class="chip chip-status st-{{$e.Status}}">{{statusLabel $e.Status}}</span>{{end}}
+    {{template "chips" $e}}
+  </span>
+</li>
+{{end}}
+
+
+{{define "entry-list-item"}}
+{{- $e := .E -}}
+<li class="row pri-l{{$e.Priority}}">
+  {{if $e.IsTask}}<span class="tickbox mini {{if eq $e.Status "done"}}ticked{{end}}">{{if eq $e.Status "done"}}✓{{end}}</span>
+  {{else}}<span class="rowdot">·</span>{{end}}
+  <a class="row-title" href="/e/{{$e.Slug}}">{{if $e.Title}}{{$e.Title}}{{else}}(untitled){{end}}</a>
+  <span class="row-chips">{{template "chips" $e}}</span>
+</li>
+{{end}}
+
+
+{{define "list-card"}}
+{{- $e := .E -}}
+<article class="lcard pri-l{{$e.Priority}}{{if $e.Pinned}} pinned{{end}}{{if eq $e.Status "done"}} is-done{{end}}">
+  <div class="lcard-top">
+    {{if $e.IsTask}}
+    <form method="post" action="/e/{{$e.Slug}}/toggle" hx-post="/e/{{$e.Slug}}/toggle"
+          hx-target="closest .lcard" hx-swap="outerHTML"
+          hx-vals='{"from": "card"}' class="check" data-no-drag>
+      <button type="submit" class="tickbox {{if eq $e.Status "done"}}ticked{{end}}"
+              aria-label="Toggle done">{{if eq $e.Status "done"}}✓{{end}}</button>
+    </form>
+    {{else}}
+    <span class="lcard-kind" aria-hidden="true">✎</span>
+    {{end}}
+    <a class="lcard-title" href="/e/{{$e.Slug}}">{{if $e.Title}}{{$e.Title}}{{else}}(untitled){{end}}</a>
+  </div>
+  {{if $e.Body}}<p class="lcard-excerpt">{{excerpt $e.Body 130}}</p>{{end}}
+  {{if or $e.IsTask $e.Due $e.Priority $e.Project $e.Tags}}
+  <div class="lcard-chips">
+    {{if $e.IsTask}}<span class="chip chip-status st-{{$e.Status}}">{{statusLabel $e.Status}}</span>{{end}}
+    {{template "chips" $e}}
+  </div>
+  {{end}}
+</article>
+{{end}}

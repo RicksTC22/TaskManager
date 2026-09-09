@@ -1,0 +1,106 @@
+{{define "content"}}
+{{$e := .E}}
+<article class="entry">
+
+  {{if .Parent}}
+  <p class="entry-parent">↳ subtask of <a href="/e/{{.Parent.Slug}}">{{.Parent.Title}}</a></p>
+  {{end}}
+
+  {{if .Editing}}
+  <form class="entry-edit" method="post" action="/e/{{$e.Slug}}">
+    <input class="edit-title" type="text" name="title" value="{{$e.Title}}" placeholder="Title" autofocus>
+    <textarea class="edit-body" name="body" rows="16" placeholder="Write… use [[links]], #tags, - [ ] checkboxes">{{$e.Body}}</textarea>
+
+    <div class="edit-fields">
+      <label>Status
+        <select name="status">
+          <option value="" {{if eq $e.Status ""}}selected{{end}}>Note (no board)</option>
+          {{range .Statuses}}<option value="{{.}}" {{if eq $e.Status .}}selected{{end}}>{{statusLabel .}}</option>{{end}}
+        </select>
+      </label>
+      <label>Priority
+        <select name="priority">
+          <option value="0" {{if eq $e.Priority 0}}selected{{end}}>—</option>
+          <option value="1" {{if eq $e.Priority 1}}selected{{end}}>Low</option>
+          <option value="2" {{if eq $e.Priority 2}}selected{{end}}>Medium</option>
+          <option value="3" {{if eq $e.Priority 3}}selected{{end}}>High</option>
+        </select>
+      </label>
+      <label>Due
+        <input type="date" name="due" value="{{$e.Due}}">
+      </label>
+      <label>Project
+        <input type="text" name="project" value="{{if $e.Project}}{{$e.Project.Name}}{{end}}" placeholder="none">
+      </label>
+      <label class="check-inline">
+        <input type="checkbox" name="pinned" value="on" {{if $e.Pinned}}checked{{end}}> Pinned
+      </label>
+    </div>
+
+    <div class="edit-actions">
+      <button type="submit" class="btn primary">Save</button>
+      <a class="btn" href="/e/{{$e.Slug}}">Cancel</a>
+      <button type="submit" class="btn danger" formaction="/e/{{$e.Slug}}/delete"
+              formmethod="post" data-confirm="Delete this entry and its subtasks?">Delete</button>
+    </div>
+  </form>
+
+  {{else}}
+
+  <header class="entry-head">
+    <div class="entry-titlewrap">
+      {{if $e.IsTask}}
+      <form method="post" action="/e/{{$e.Slug}}/toggle" class="check">
+        <button class="tickbox big {{if eq $e.Status "done"}}ticked{{end}}" aria-label="Toggle done">{{if eq $e.Status "done"}}✓{{end}}</button>
+      </form>
+      {{end}}
+      <h1 class="{{if eq $e.Status "done"}}done{{end}}">{{if $e.Title}}{{$e.Title}}{{else}}(untitled){{end}}</h1>
+    </div>
+    <div class="entry-actions">
+      <form method="post" action="/e/{{$e.Slug}}/pin"><button class="btn ghost" title="Pin">{{if $e.Pinned}}★{{else}}☆{{end}}</button></form>
+      <a class="btn" href="/e/{{$e.Slug}}/edit">Edit</a>
+    </div>
+  </header>
+
+  {{if $e.IsTask}}
+  <div class="entry-meta">
+    <span class="chip chip-status st-{{$e.Status}}">{{statusLabel $e.Status}}</span>
+    {{template "chips" $e}}
+  </div>
+  {{else if or $e.Tags $e.Project}}
+  <div class="entry-meta">{{template "chips" $e}}</div>
+  {{end}}
+
+  <div class="entry-body prose">
+    {{if .BodyHTML}}{{.BodyHTML}}{{else}}<p class="muted">No notes yet. <a href="/e/{{$e.Slug}}/edit">Add some.</a></p>{{end}}
+  </div>
+
+  {{if $e.Children}}
+  <section class="subtasks">
+    <h2>Subtasks</h2>
+    <ul class="rows">
+      {{range $e.Children}}{{template "task-row" (dict "E" .)}}{{end}}
+    </ul>
+  </section>
+  {{end}}
+
+  <form class="subtask-add" method="post" action="/entries" hx-post="/entries" hx-swap="none">
+    <input type="hidden" name="from" value="entry">
+    <input type="hidden" name="parent" value="{{$e.ID}}">
+    <input type="hidden" name="status" value="inbox">
+    <input type="text" name="title" placeholder="+ Add subtask">
+  </form>
+
+  {{if .Backlinks}}
+  <section class="backlinks">
+    <h2>Linked from</h2>
+    <ul class="rows">
+      {{range .Backlinks}}{{template "entry-list-item" (dict "E" .)}}{{end}}
+    </ul>
+  </section>
+  {{end}}
+
+  <p class="entry-foot muted">Updated {{relTime $e.UpdatedAt}} · created {{relTime $e.CreatedAt}}</p>
+  {{end}}
+</article>
+{{end}}

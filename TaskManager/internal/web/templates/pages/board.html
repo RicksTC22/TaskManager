@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="layout-with-side">
+  {{template "sidebar" .}}
+
+  <section class="pane">
+    <div class="pane-head">
+      <h1>Board</h1>
+      <div class="pane-actions">
+        <a class="btn" href="/list">List view</a>
+      </div>
+    </div>
+
+    {{template "board" .}}
+  </section>
+</div>
+{{end}}
+
+
+{{define "board"}}
+<div id="board" class="board" data-project="{{.ProjectSlug}}">
+  {{$ps := .ProjectSlug}}
+  {{range $status := .Statuses}}
+  {{$col := index $.Board $status}}
+  <div class="col" data-status="{{$status}}">
+    <div class="col-head">
+      <span class="col-name st-{{$status}}">{{statusLabel $status}}</span>
+      <span class="col-count">{{len $col}}</span>
+    </div>
+    <div class="col-cards" data-status="{{$status}}">
+      {{range $col}}
+      {{template "task-card" (dict "E" . "PS" $ps)}}
+      {{end}}
+    </div>
+    <form class="col-add" method="post" action="/entries"
+          hx-post="/entries" hx-target="#board" hx-swap="outerHTML">
+      <input type="hidden" name="from" value="board">
+      <input type="hidden" name="status" value="{{$status}}">
+      <input type="hidden" name="project_slug" value="{{$ps}}">
+      <input type="text" name="title" placeholder="+ Add to {{statusLabel $status}}" aria-label="New task">
+    </form>
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,17 @@
+{{define "content"}}
+<section class="auth">
+  <div class="auth-card">
+    <h1>{{.SiteName}}</h1>
+    <p class="auth-sub">Sign in to your notebook.</p>
+    {{if .Error}}<p class="auth-error">{{.Error}}</p>{{end}}
+    <form method="post" action="/login" hx-boost="false">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>Email<input type="email" name="email" value="{{.Email}}" required autofocus autocomplete="username"></label>
+      <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+      <button type="submit" class="btn primary">Sign in</button>
+    </form>
+    <p class="auth-alt">No account? <a href="/signup">Create one</a></p>
+  </div>
+</section>
+{{end}}

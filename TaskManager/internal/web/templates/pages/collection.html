@@ -1,0 +1,18 @@
+{{define "content"}}
+<div class="layout-with-side">
+  {{template "sidebar" .}}
+  <section class="pane">
+    <div class="pane-head">
+      <h1>{{.Heading}}</h1>
+      {{if .Project}}<a class="btn" href="/board?project={{.Project.Slug}}">Board view</a>{{end}}
+    </div>
+    {{if .Entries}}
+    <div class="card-grid">
+      {{range .Entries}}{{template "list-card" (dict "E" .)}}{{end}}
+    </div>
+    {{else}}
+    <p class="empty">Nothing here yet.</p>
+    {{end}}
+  </section>
+</div>
+{{end}}

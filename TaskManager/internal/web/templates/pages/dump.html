@@ -1,0 +1,104 @@
+{{define "content"}}
+<section class="dump">
+  <h1>Idea dump</h1>
+  <p class="lede">Empty your head. Each block (separated by a <strong>blank line</strong>)
+  is one item: the first line is the item, a line starting with <code>-</code> is a
+  <strong>subtask</strong>, any other line joins the item's notes. Cairn pulls out
+  <code>#tags</code>, <code>[[links]]</code>, <code>@projects</code>,
+  <code>!priority</code> and dates — you review everything before it saves.</p>
+
+  <form method="post" action="/dump/preview" hx-post="/dump/preview" hx-target="#preview" hx-swap="innerHTML">
+    <textarea name="text" rows="14" autofocus placeholder="call the dentist tomorrow !high
+
+buy new hiking boots @errands
+
+Plan the trip
+still deciding on dates
+- book flights !high friday
+- reserve the cabin
+- [[Pack list]]
+
+read the Meditations #reading
+the Gregory Hays translation"></textarea>
+    <div class="dump-actions">
+      <button type="submit" class="btn primary">Sort it</button>
+    </div>
+  </form>
+
+  <div id="preview"></div>
+</section>
+{{end}}
+
+
+{{define "preview"}}
+{{if .Empty}}
+<p class="empty">Nothing to sort yet — type some lines above.</p>
+{{else}}
+<form method="post" action="/dump/commit" hx-post="/dump/commit" class="review">
+  <div class="review-head">
+    <h2>{{.Count}} item{{if ne .Count 1}}s{{end}}</h2>
+    <button type="submit" class="btn primary">Save all checked</button>
+  </div>
+
+  {{$statuses := .Statuses}}
+  {{range .Rows}}
+  {{if eq .Depth 0}}
+  <fieldset class="review-row">
+    <label class="review-keep">
+      <input type="checkbox" name="keep_{{.I}}" value="1" checked>
+      <input type="hidden" name="row" value="{{.I}}">
+    </label>
+    <div class="review-main">
+      <input class="review-title" type="text" name="title_{{.I}}" value="{{.Title}}">
+      {{if .Body}}<textarea class="review-body" name="body_{{.I}}" rows="2">{{.Body}}</textarea>
+      {{else}}<textarea class="review-body" name="body_{{.I}}" rows="1" placeholder="notes…"></textarea>{{end}}
+      <div class="review-fields">
+        <select name="status_{{.I}}" title="Type">
+          <option value="" {{if not .IsTask}}selected{{end}}>Note</option>
+          {{$st := .Status}}
+          {{range $statuses}}<option value="{{.}}" {{if eq $st .}}selected{{end}}>{{statusLabel .}}</option>{{end}}
+        </select>
+        <select name="priority_{{.I}}" title="Priority">
+          <option value="0" {{if eq .Priority 0}}selected{{end}}>—</option>
+          <option value="1" {{if eq .Priority 1}}selected{{end}}>Low</option>
+          <option value="2" {{if eq .Priority 2}}selected{{end}}>Med</option>
+          <option value="3" {{if eq .Priority 3}}selected{{end}}>High</option>
+        </select>
+        <input type="date" name="due_{{.I}}" value="{{.Due}}" title="Due">
+        <input type="text" name="project_{{.I}}" value="{{.Project}}" placeholder="project" title="Project">
+        {{range .Tags}}<span class="chip chip-tag">#{{.}}</span>{{end}}
+        {{range .Links}}<span class="chip">[[{{.}}]]</span>{{end}}
+      </div>
+    </div>
+  </fieldset>
+  {{else}}
+  <fieldset class="review-row review-sub">
+    <label class="review-keep">
+      <input type="checkbox" name="keep_{{.I}}" value="1" checked>
+      <input type="hidden" name="row" value="{{.I}}">
+      <input type="hidden" name="parent_{{.I}}" value="{{.Parent}}">
+    </label>
+    <div class="review-main">
+      <span class="review-subarrow" aria-hidden="true">↳</span>
+      <input class="review-title" type="text" name="title_{{.I}}" value="{{.Title}}">
+      <select name="status_{{.I}}" class="review-substatus" title="Type">
+        <option value="" {{if not .IsTask}}selected{{end}}>Note</option>
+        {{$st := .Status}}
+        {{range $statuses}}<option value="{{.}}" {{if eq $st .}}selected{{end}}>{{statusLabel .}}</option>{{end}}
+      </select>
+      <select name="priority_{{.I}}" title="Priority">
+        <option value="0" {{if eq .Priority 0}}selected{{end}}>—</option>
+        <option value="1" {{if eq .Priority 1}}selected{{end}}>Low</option>
+        <option value="2" {{if eq .Priority 2}}selected{{end}}>Med</option>
+        <option value="3" {{if eq .Priority 3}}selected{{end}}>High</option>
+      </select>
+      <input type="date" name="due_{{.I}}" value="{{.Due}}" title="Due">
+    </div>
+  </fieldset>
+  {{end}}
+  {{end}}
+
+  <button type="submit" class="btn primary">Save all checked</button>
+</form>
+{{end}}
+{{end}}

@@ -1,0 +1,49 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{.CSRF}}">
+<title>{{if .Title}}{{.Title}} · {{end}}{{.SiteName}}</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/favicon.svg">
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body class="mode-{{if .Mode}}{{.Mode}}{{else}}dense{{end}}" hx-boost="true">
+<a class="skip" href="#main">Skip to content</a>
+
+{{if .User}}
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/board">{{.SiteName}}</a>
+    <nav class="mainnav">
+      <a href="/board" class="{{if hasPrefix .Path "/board"}}on{{end}}">Board</a>
+      <a href="/list" class="{{if hasPrefix .Path "/list"}}on{{end}}">List</a>
+      <a href="/calendar" class="{{if hasPrefix .Path "/calendar"}}on{{end}}">Calendar</a>
+      <a href="/dump" class="{{if hasPrefix .Path "/dump"}}on{{end}}">Idea&nbsp;dump</a>
+      <a href="/search" class="{{if hasPrefix .Path "/search"}}on{{end}}">Search</a>
+    </nav>
+    <div class="topbar-right">
+      <form class="modeswitch" method="post" action="/mode" hx-post="/mode" hx-swap="none">
+        <button name="mode" value="minimal" class="{{if eq .Mode "minimal"}}on{{end}}" title="Minimal — for writing">Aa</button>
+        <button name="mode" value="dense" class="{{if eq .Mode "dense"}}on{{end}}" title="Dense — for tasks">≣</button>
+      </form>
+      <details class="usermenu">
+        <summary><span class="avatar">{{initial .User.Email}}</span></summary>
+        <div class="usermenu-pop">
+          <p class="usermenu-email">{{.User.Email}}</p>
+          <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+        </div>
+      </details>
+    </div>
+  </div>
+</header>
+{{end}}
+
+<main id="main">
+{{block "content" .}}{{end}}
+</main>
+
+</body>
+</html>{{end}}

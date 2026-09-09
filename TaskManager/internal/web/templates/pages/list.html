@@ -1,0 +1,82 @@
+{{define "content"}}
+<div class="layout-with-side">
+  {{template "sidebar" .}}
+
+  <section class="pane">
+    <div class="pane-head">
+      <h1>{{if .Project}}{{.Project.Name}}{{else}}List{{end}}</h1>
+      <div class="pane-actions">
+        <a class="btn" href="/board{{if .Project}}?project={{.Project.Slug}}{{end}}">Board view</a>
+      </div>
+    </div>
+
+    <form class="filters" method="get" action="/list"
+          hx-get="/list" hx-target="#results" hx-swap="outerHTML" hx-trigger="change, search">
+      {{if .Project}}<input type="hidden" name="project" value="{{.Project.Slug}}">{{end}}
+      <input type="search" name="q" value="{{.Query}}" placeholder="Filter…" aria-label="Filter text">
+      <select name="view" aria-label="Kind">
+        <option value="" {{if eq .View ""}}selected{{end}}>Everything</option>
+        <option value="tasks" {{if eq .View "tasks"}}selected{{end}}>Tasks</option>
+        <option value="notes" {{if eq .View "notes"}}selected{{end}}>Notes</option>
+      </select>
+      <select name="status" aria-label="Status">
+        <option value="">Any status</option>
+        {{range .Statuses}}<option value="{{.}}" {{if eq $.Status .}}selected{{end}}>{{statusLabel .}}</option>{{end}}
+      </select>
+      <select name="due" aria-label="Due">
+        <option value="">Any date</option>
+        <option value="overdue" {{if eq .Due "overdue"}}selected{{end}}>Overdue</option>
+        <option value="today" {{if eq .Due "today"}}selected{{end}}>Today</option>
+        <option value="week" {{if eq .Due "week"}}selected{{end}}>This week</option>
+        <option value="none" {{if eq .Due "none"}}selected{{end}}>No date</option>
+      </select>
+      <select name="sort" aria-label="Sort">
+        <option value="updated" {{if eq .Sort "updated"}}selected{{end}}>Recently updated</option>
+        <option value="created" {{if eq .Sort "created"}}selected{{end}}>Newest</option>
+        <option value="due" {{if eq .Sort "due"}}selected{{end}}>By due date</option>
+        <option value="priority" {{if eq .Sort "priority"}}selected{{end}}>By priority</option>
+        <option value="title" {{if eq .Sort "title"}}selected{{end}}>A–Z</option>
+      </select>
+      <span class="layoutswitch">
+        <label><input type="radio" name="layout" value="cards" {{if eq .Layout "cards"}}checked{{end}}> Cards</label>
+        <label><input type="radio" name="layout" value="rows" {{if eq .Layout "rows"}}checked{{end}}> Rows</label>
+      </span>
+    </form>
+
+    <form class="quickadd" method="post" action="/entries" hx-post="/entries" hx-swap="none">
+      <input type="hidden" name="from" value="entry">
+      <input type="text" name="title" placeholder="Add an entry…" aria-label="New entry">
+      <select name="status" aria-label="As">
+        <option value="">Note</option>
+        {{range .Statuses}}<option value="{{.}}">{{statusLabel .}}</option>{{end}}
+      </select>
+      <button type="submit">Add</button>
+    </form>
+
+    {{template "results" .}}
+  </section>
+</div>
+{{end}}
+
+
+{{define "results"}}
+<div id="results">
+  {{if .Groups}}
+  {{$layout := .Layout}}
+  {{range .Groups}}
+    {{if .Label}}<h2 class="group-label">{{.Label}}</h2>{{end}}
+    {{if eq $layout "rows"}}
+    <ul class="rows">
+      {{range .Entries}}{{template "task-row" (dict "E" .)}}{{end}}
+    </ul>
+    {{else}}
+    <div class="card-grid">
+      {{range .Entries}}{{template "list-card" (dict "E" .)}}{{end}}
+    </div>
+    {{end}}
+  {{end}}
+  {{else}}
+  <p class="empty">Nothing here. Add something above, or loosen the filters.</p>
+  {{end}}
+</div>
+{{end}}
