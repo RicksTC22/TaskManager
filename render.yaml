@@ -1,0 +1,52 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Phase 1 (this file): Docker web service + a persistent disk for the SQLite
+# database. Requires a paid instance type (free instances have no disks).
+#
+# Phase 2 (Postgres): uncomment the `databases:` block and the DATABASE_URL
+# env var below, then delete the `disk:` block and the CAIRN_DB var. See
+# DEPLOY.md for the full cutover.
+
+services:
+  - type: web
+    name: cairn
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter            # disks need a paid plan; use "free" only without a disk
+    region: oregon           # match your Postgres region later
+    branch: main
+    autoDeployTrigger: commit
+    healthCheckPath: /healthz
+    envVars:
+      - key: CAIRN_SECRET
+        generateValue: true  # generated once, then held stable across deploys
+      - key: CAIRN_SECURE_COOKIES
+        value: "1"
+      - key: CAIRN_SITE_NAME
+        value: Cairn
+      - key: CAIRN_DEMO
+        value: "false"
+      - key: TZ
+        value: UTC           # <-- set to your timezone, e.g. America/Denver
+
+      # --- Phase 1: SQLite on a disk ---
+      - key: CAIRN_DB
+        value: /data/cairn.db
+
+      # --- Phase 2: Postgres (uncomment, remove CAIRN_DB + disk) ---
+      # - key: DATABASE_URL
+      #   fromDatabase:
+      #     name: cairn-db
+      #     property: connectionString
+
+    disk:
+      name: cairn-data
+      mountPath: /data
+      sizeGB: 1
+
+# --- Phase 2: Postgres (uncomment) ---
+# databases:
+#   - name: cairn-db
+#     plan: free             # free Postgres expires after 30 days; upgrade to keep it
+#     region: oregon
+#     postgresMajorVersion: "16"
