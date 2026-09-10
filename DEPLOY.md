@@ -53,26 +53,34 @@ the Render shell, or move to Postgres.
 Limitations: one instance only (a disk can't be shared), no point-in-time
 restore, and the disk is the single point of failure.
 
-## Phase 2 — Postgres (in progress)
+## Phase 2 — Postgres
 
-The `postgres` branch adds Postgres support behind `DATABASE_URL`: when it is
-set the app uses Postgres, otherwise it falls back to the local SQLite file.
-See that branch's checklist. Once it merges, the cutover is:
+The `postgres` branch teaches the store package both dialects. `store.Open()`
+uses Postgres when the DSN is a `postgres://` URL and SQLite for a file path, so
+setting `DATABASE_URL` is the only switch. Local dev and CI still use SQLite;
+CI additionally runs the store suite against a real `postgres:16`.
 
-1. `render.yaml`: uncomment the `databases:` block and the `DATABASE_URL` env
-   var; delete the `disk:` block and the `CAIRN_DB` var. Push.
+Cutover, once `postgres` is merged:
+
+1. Edit `render.yaml`: uncomment the `databases:` block and the `DATABASE_URL`
+   env var, then **delete** the `disk:` block, the `CAIRN_DB` var, and (Phase 1
+   only) `plan: starter` can drop back to `free` if you want. Push.
 2. Render creates the `cairn-db` Postgres instance and injects `DATABASE_URL`.
-3. **Migrate existing data** (if the disk holds anything worth keeping):
+   On boot the app runs `migrations/postgres/*.sql` against it.
+3. **Move existing data** (skip if the disk is empty / you don't mind starting
+   fresh):
    ```
-   # from a machine with both URLs and the Cairn repo:
-   go run ./cmd/pgimport -from /path/to/cairn.db -to "$DATABASE_URL"
+   # get the SQLite file off the disk first — Render shell:
+   #   cat /data/cairn.db | base64   (then decode locally), or use a one-off job
+   go run ./cmd/pgimport -from ./cairn.db -to "postgres://…the DATABASE_URL…"
    ```
-   (the `cmd/pgimport` helper ships on the `postgres` branch)
-4. Redeploy. Verify sign-in, board, calendar, and a search (`/search?q=...`).
-5. Delete the disk once you've confirmed Postgres holds the data.
+   It keeps ids, rebuilds the search index, and bumps the identity sequences.
+   Sessions are not copied — everyone signs in again.
+4. Redeploy. Verify sign-in, board, a search (`/search?q=…`), and the calendar.
+5. Delete the disk once Postgres holds everything.
 
-The free Postgres plan is deleted after 30 days — upgrade it (or accept the
-reset) before then.
+Render's **free** Postgres is deleted 30 days after creation — upgrade it (or
+accept the reset) before then. Match its region to the web service's.
 
 ## Local development
 
@@ -85,6 +93,15 @@ docker build -t cairn . && docker run --rm -p 8080:8080 \
 
 `CAIRN_DEMO=true` (the default) seeds `demo@cairn.local` / `demodemo` when the
 database is empty.
+
+Against Postgres locally:
+
+```
+docker compose up -d           # postgres on :5432, plus a cairn_test database
+go run . --db "postgres://cairn:cairn@localhost:5432/cairn?sslmode=disable"
+TEST_DATABASE_URL="postgres://cairn:cairn@localhost:5432/cairn_test?sslmode=disable" \
+  go test ./internal/store/ -v
+```
 
 ## Troubleshooting
 
