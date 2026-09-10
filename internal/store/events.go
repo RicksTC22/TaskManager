@@ -89,7 +89,7 @@ func formatStamp(t time.Time, allDay bool) string {
 func (db *DB) EventByID(userID, id int64) (*Event, error) {
 	var e Event
 	var allDay int
-	err := db.sql.QueryRow(`SELECT id, calendar_id, uid, title, description, location,
+	err := db.row(db.sql, `SELECT id, calendar_id, uid, title, description, location,
 		starts_at, ends_at, all_day, rrule, source
 		FROM events WHERE user_id = ? AND id = ?`, userID, id).
 		Scan(&e.ID, &e.CalendarID, &e.UID, &e.Title, &e.Description, &e.Location,
@@ -124,7 +124,7 @@ func (db *DB) CreateEvent(userID int64, in EventInput) (*Event, error) {
 	if src == "" {
 		src = "manual"
 	}
-	res, err := db.sql.Exec(`INSERT INTO events
+	id, err := db.ins(db.sql, `INSERT INTO events
 		(user_id, calendar_id, uid, title, description, location, starts_at, ends_at, all_day, rrule, source, created_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		userID, in.CalendarID, in.UID, strings.TrimSpace(in.Title), in.Description, in.Location,
@@ -133,7 +133,6 @@ func (db *DB) CreateEvent(userID int64, in EventInput) (*Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 	return db.EventByID(userID, id)
 }
 
@@ -146,7 +145,7 @@ func (db *DB) UpdateEvent(userID, id int64, in EventInput) (*Event, error) {
 			in.End = in.Start.Add(time.Hour)
 		}
 	}
-	_, err := db.sql.Exec(`UPDATE events SET calendar_id = ?, title = ?, description = ?, location = ?,
+	_, err := db.ex(db.sql, `UPDATE events SET calendar_id = ?, title = ?, description = ?, location = ?,
 		starts_at = ?, ends_at = ?, all_day = ?, rrule = ?, updated_at = ?
 		WHERE user_id = ? AND id = ?`,
 		in.CalendarID, strings.TrimSpace(in.Title), in.Description, in.Location,
@@ -174,14 +173,14 @@ func (db *DB) MoveEvent(userID, id int64, newDate string) error {
 	newStart := time.Date(target.Year(), target.Month(), target.Day(),
 		start.Hour(), start.Minute(), 0, 0, time.Local)
 	newEnd := newStart.Add(dur)
-	_, err = db.sql.Exec(`UPDATE events SET starts_at = ?, ends_at = ?, updated_at = ? WHERE user_id = ? AND id = ?`,
+	_, err = db.ex(db.sql, `UPDATE events SET starts_at = ?, ends_at = ?, updated_at = ? WHERE user_id = ? AND id = ?`,
 		formatStamp(newStart, e.AllDay), formatStamp(newEnd, e.AllDay), now(), userID, id)
 	return err
 }
 
 // DeleteEvent removes an event.
 func (db *DB) DeleteEvent(userID, id int64) error {
-	_, err := db.sql.Exec(`DELETE FROM events WHERE user_id = ? AND id = ?`, userID, id)
+	_, err := db.ex(db.sql, `DELETE FROM events WHERE user_id = ? AND id = ?`, userID, id)
 	return err
 }
 
@@ -208,9 +207,9 @@ func (db *DB) ImportICS(userID, calendarID int64, cal *parse.ICSCalendar) (int, 
 
 		if ev.UID != "" {
 			var existing int64
-			err := tx.QueryRow(`SELECT id FROM events WHERE calendar_id = ? AND uid = ?`, calendarID, ev.UID).Scan(&existing)
+			err := db.row(tx, `SELECT id FROM events WHERE calendar_id = ? AND uid = ?`, calendarID, ev.UID).Scan(&existing)
 			if err == nil {
-				if _, err := tx.Exec(`UPDATE events SET title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, rrule=?, updated_at=?
+				if _, err := db.ex(tx, `UPDATE events SET title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, rrule=?, updated_at=?
 					WHERE id = ?`, title, ev.Description, ev.Location, start, end, boolToInt(ev.AllDay), ev.RRule, now(), existing); err != nil {
 					return n, err
 				}
@@ -221,7 +220,7 @@ func (db *DB) ImportICS(userID, calendarID int64, cal *parse.ICSCalendar) (int, 
 				return n, err
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO events
+		if _, err := db.ex(tx, `INSERT INTO events
 			(user_id, calendar_id, uid, title, description, location, starts_at, ends_at, all_day, rrule, source, created_at, updated_at)
 			VALUES (?,?,?,?,?,?,?,?,?,?, 'import', ?, ?)`,
 			userID, calendarID, ev.UID, title, ev.Description, ev.Location, start, end, boolToInt(ev.AllDay), ev.RRule, now(), now()); err != nil {
@@ -258,7 +257,7 @@ func (db *DB) OccurrencesInRange(userID int64, from, to time.Time, includeHidden
 
 	// Tasks by due date.
 	if tasksCal != nil && (tasksCal.Visible || includeHidden) {
-		rows, err := db.sql.Query(`SELECT slug, title, status, priority, due FROM entries
+		rows, err := db.qy(db.sql, `SELECT slug, title, status, priority, due FROM entries
 			WHERE user_id = ? AND due IS NOT NULL AND due >= ? AND due < ?`,
 			userID, from.Format(stampDate), to.Format(stampDate))
 		if err != nil {
@@ -286,9 +285,9 @@ func (db *DB) OccurrencesInRange(userID int64, from, to time.Time, includeHidden
 	}
 
 	// Stored events.
-	rows, err := db.sql.Query(`SELECT e.id, e.calendar_id, e.title, e.starts_at, e.ends_at, e.all_day, e.rrule
+	rows, err := db.qy(db.sql, `SELECT e.id, e.calendar_id, e.title, e.starts_at, e.ends_at, e.all_day, e.rrule
 		FROM events e JOIN calendars c ON c.id = e.calendar_id
-		WHERE e.user_id = ? AND (c.visible = 1 OR ?)`, userID, boolToInt(includeHidden))
+		WHERE e.user_id = ? AND (c.visible = 1 OR ? = 1)`, userID, boolToInt(includeHidden))
 	if err != nil {
 		return nil, err
 	}

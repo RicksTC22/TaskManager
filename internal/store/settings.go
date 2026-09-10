@@ -10,7 +10,7 @@ import (
 // Setting reads a settings value, or "" if absent.
 func (db *DB) Setting(key string) (string, error) {
 	var v string
-	err := db.sql.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	err := db.row(db.sql, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -19,8 +19,8 @@ func (db *DB) Setting(key string) (string, error) {
 
 // SetSetting writes a settings value.
 func (db *DB) SetSetting(key, value string) error {
-	_, err := db.sql.Exec(`INSERT INTO settings (key, value) VALUES (?,?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	_, err := db.ex(db.sql, `INSERT INTO settings (key, value) VALUES (?,?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 

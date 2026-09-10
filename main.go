@@ -10,7 +10,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
+
+	_ "time/tzdata" // embed the zoneinfo DB so TZ / ICS TZID work in a scratch container
 
 	"taskmanager/internal/store"
 	"taskmanager/internal/web"
@@ -24,7 +27,7 @@ func main() {
 	addr := flag.String("addr", defaultAddr, "listen address")
 	dbPath := flag.String("db", envOr("CAIRN_DB", filepath.Join("data", "cairn.db")), "SQLite database path")
 	siteName := flag.String("site-name", envOr("CAIRN_SITE_NAME", "Cairn"), "site name shown in the UI")
-	demo := flag.Bool("demo", true, "create a demo account with sample data when the database is empty")
+	demo := flag.Bool("demo", envBool("CAIRN_DEMO", true), "create a demo account with sample data when the database is empty")
 	secret := flag.String("secret", os.Getenv("CAIRN_SECRET"), "server secret for CSRF/signing (generated and stored if empty)")
 	secureCookies := flag.Bool("secure-cookies", os.Getenv("CAIRN_SECURE_COOKIES") == "1",
 		"always mark cookies Secure (use behind HTTPS/TLS-terminating proxy)")
@@ -94,4 +97,15 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }

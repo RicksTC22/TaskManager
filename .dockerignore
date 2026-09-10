@@ -1,0 +1,17 @@
+.git
+.github
+.claude
+data
+*.db
+*.db-shm
+*.db-wal
+cairn
+cairn.exe
+/app
+dist
+*.log
+.env
+.env.local
+README.md
+DEPLOY.md
+docs
