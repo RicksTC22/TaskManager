@@ -90,15 +90,23 @@ func Slugify(s string) string {
 	return s
 }
 
+// ci wraps a column for case-insensitive ordering in the active dialect.
+func (db *DB) ci(expr string) string {
+	if db.d == dialectPostgres {
+		return "LOWER(" + expr + ")"
+	}
+	return expr + " COLLATE NOCASE"
+}
+
 // ---- Projects ---------------------------------------------------------------
 
 // Projects lists a user's projects with entry counts.
 func (db *DB) Projects(userID int64) ([]Project, error) {
-	rows, err := db.sql.Query(`
+	rows, err := db.qy(db.sql, `
 		SELECT p.id, p.slug, p.name, p.sort,
 		       (SELECT COUNT(*) FROM entries e WHERE e.project_id = p.id)
 		FROM projects p WHERE p.user_id = ?
-		ORDER BY p.sort, p.name COLLATE NOCASE`, userID)
+		ORDER BY p.sort, `+db.ci("p.name"), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +125,7 @@ func (db *DB) Projects(userID int64) ([]Project, error) {
 // ProjectBySlug looks up one project.
 func (db *DB) ProjectBySlug(userID int64, slug string) (*Project, error) {
 	var p Project
-	err := db.sql.QueryRow(`SELECT id, slug, name, sort FROM projects WHERE user_id = ? AND slug = ?`,
+	err := db.row(db.sql, `SELECT id, slug, name, sort FROM projects WHERE user_id = ? AND slug = ?`,
 		userID, slug).Scan(&p.ID, &p.Slug, &p.Name, &p.Sort)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -125,7 +133,7 @@ func (db *DB) ProjectBySlug(userID int64, slug string) (*Project, error) {
 	return &p, err
 }
 
-func upsertProject(tx *sql.Tx, userID int64, name string) (int64, error) {
+func (db *DB) upsertProject(tx *sql.Tx, userID int64, name string) (int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return 0, nil
@@ -134,12 +142,12 @@ func upsertProject(tx *sql.Tx, userID int64, name string) (int64, error) {
 	if slug == "" {
 		return 0, nil
 	}
-	if _, err := tx.Exec(`INSERT INTO projects (user_id, slug, name) VALUES (?,?,?)
-		ON CONFLICT(user_id, slug) DO UPDATE SET name = excluded.name`, userID, slug, name); err != nil {
+	if _, err := db.ex(tx, `INSERT INTO projects (user_id, slug, name) VALUES (?,?,?)
+		ON CONFLICT (user_id, slug) DO UPDATE SET name = excluded.name`, userID, slug, name); err != nil {
 		return 0, err
 	}
 	var id int64
-	return id, tx.QueryRow(`SELECT id FROM projects WHERE user_id = ? AND slug = ?`, userID, slug).Scan(&id)
+	return id, db.row(tx, `SELECT id FROM projects WHERE user_id = ? AND slug = ?`, userID, slug).Scan(&id)
 }
 
 // CreateProject makes an empty project.
@@ -149,7 +157,7 @@ func (db *DB) CreateProject(userID int64, name string) (*Project, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := upsertProject(tx, userID, name); err != nil {
+	if _, err := db.upsertProject(tx, userID, name); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -168,11 +176,11 @@ type TagCount struct {
 
 // Tags lists a user's tags with counts, most-used first.
 func (db *DB) Tags(userID int64) ([]TagCount, error) {
-	rows, err := db.sql.Query(`
+	rows, err := db.qy(db.sql, `
 		SELECT t.name, COUNT(et.entry_id)
 		FROM tags t LEFT JOIN entry_tags et ON et.tag_id = t.id
 		WHERE t.user_id = ?
-		GROUP BY t.id HAVING COUNT(et.entry_id) > 0
+		GROUP BY t.id, t.name HAVING COUNT(et.entry_id) > 0
 		ORDER BY COUNT(et.entry_id) DESC, t.name`, userID)
 	if err != nil {
 		return nil, err
@@ -191,10 +199,6 @@ func (db *DB) Tags(userID int64) ([]TagCount, error) {
 
 // ---- Entry reads ---------------------------------------------------------
 
-const entryCols = `id, slug, title, body, status, priority, COALESCE(due,''),
-	COALESCE(project_id,0), COALESCE(parent_id,0), board_sort, pinned,
-	created_at, updated_at, COALESCE(done_at,'')`
-
 func scanEntry(s interface{ Scan(...any) error }) (*Entry, error) {
 	var e Entry
 	var pinned int
@@ -208,7 +212,7 @@ func scanEntry(s interface{ Scan(...any) error }) (*Entry, error) {
 
 // EntryBySlug loads one entry with its project, tags and direct children.
 func (db *DB) EntryBySlug(userID int64, slug string) (*Entry, error) {
-	row := db.sql.QueryRow(`SELECT `+entryCols+` FROM entries WHERE user_id = ? AND slug = ?`, userID, slug)
+	row := db.row(db.sql, `SELECT `+colsFor("entries")+` FROM entries WHERE user_id = ? AND slug = ?`, userID, slug)
 	e, err := scanEntry(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -229,7 +233,7 @@ func (db *DB) EntryBySlug(userID int64, slug string) (*Entry, error) {
 
 // EntryByID is EntryBySlug's id-keyed sibling (no children hydration).
 func (db *DB) EntryByID(userID, id int64) (*Entry, error) {
-	row := db.sql.QueryRow(`SELECT `+entryCols+` FROM entries WHERE user_id = ? AND id = ?`, userID, id)
+	row := db.row(db.sql, `SELECT `+colsFor("entries")+` FROM entries WHERE user_id = ? AND id = ?`, userID, id)
 	e, err := scanEntry(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -246,12 +250,12 @@ func (db *DB) EntryByID(userID, id int64) (*Entry, error) {
 func (db *DB) hydrate(userID int64, e *Entry) error {
 	if e.ProjectID != 0 {
 		var p Project
-		if err := db.sql.QueryRow(`SELECT id, slug, name, sort FROM projects WHERE id = ?`, e.ProjectID).
+		if err := db.row(db.sql, `SELECT id, slug, name, sort FROM projects WHERE id = ?`, e.ProjectID).
 			Scan(&p.ID, &p.Slug, &p.Name, &p.Sort); err == nil {
 			e.Project = &p
 		}
 	}
-	rows, err := db.sql.Query(`SELECT t.name FROM entry_tags et JOIN tags t ON t.id = et.tag_id
+	rows, err := db.qy(db.sql, `SELECT t.name FROM entry_tags et JOIN tags t ON t.id = et.tag_id
 		WHERE et.entry_id = ? ORDER BY t.name`, e.ID)
 	if err != nil {
 		return err
@@ -268,8 +272,8 @@ func (db *DB) hydrate(userID int64, e *Entry) error {
 }
 
 func (db *DB) childrenOf(userID, parentID int64) ([]*Entry, error) {
-	rows, err := db.sql.Query(`SELECT `+entryCols+` FROM entries
-		WHERE user_id = ? AND parent_id = ? ORDER BY status='done', board_sort, id`, userID, parentID)
+	rows, err := db.qy(db.sql, `SELECT `+colsFor("entries")+` FROM entries
+		WHERE user_id = ? AND parent_id = ? ORDER BY (status='done'), board_sort, id`, userID, parentID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +292,7 @@ func (db *DB) childrenOf(userID, parentID int64) ([]*Entry, error) {
 // TitleSlug resolves an entry title (case-insensitive) to its slug.
 func (db *DB) TitleSlug(userID int64, title string) (string, bool) {
 	var slug string
-	err := db.sql.QueryRow(`SELECT slug FROM entries WHERE user_id = ? AND lower(title) = lower(?)
+	err := db.row(db.sql, `SELECT slug FROM entries WHERE user_id = ? AND lower(title) = lower(?)
 		ORDER BY id LIMIT 1`, userID, strings.TrimSpace(title)).Scan(&slug)
 	if err != nil {
 		return "", false
@@ -298,7 +302,7 @@ func (db *DB) TitleSlug(userID int64, title string) (string, bool) {
 
 // Backlinks returns entries whose body links to the given entry.
 func (db *DB) Backlinks(userID, entryID int64) ([]*Entry, error) {
-	rows, err := db.sql.Query(`SELECT `+colsFor("e")+`
+	rows, err := db.qy(db.sql, `SELECT `+colsFor("e")+`
 		FROM links l JOIN entries e ON e.id = l.src_id
 		WHERE l.dst_id = ? AND e.user_id = ?
 		ORDER BY e.updated_at DESC`, entryID, userID)
@@ -331,6 +335,15 @@ type EntryFilter struct {
 	Limit     int
 }
 
+// searchFilter returns the JOIN fragment, WHERE fragment and args that apply a
+// full-text search for q in the active dialect.
+func (db *DB) searchFilter(q string) (join, where string, args []any) {
+	if db.d == dialectPostgres {
+		return "", "e.search @@ websearch_to_tsquery('english', ?)", []any{q}
+	}
+	return " JOIN entry_fts fts ON fts.rowid = e.id ", "entry_fts MATCH ?", []any{ftsMatch(q)}
+}
+
 // ListEntries runs a filtered entry query.
 func (db *DB) ListEntries(userID int64, f EntryFilter) ([]*Entry, error) {
 	where := []string{"e.user_id = ?"}
@@ -345,9 +358,10 @@ func (db *DB) ListEntries(userID int64, f EntryFilter) ([]*Entry, error) {
 		joinArgs = append(joinArgs, strings.ToLower(f.Tag))
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
-		join += " JOIN entry_fts fts ON fts.rowid = e.id "
-		where = append(where, "entry_fts MATCH ?")
-		whereArgs = append(whereArgs, ftsQuery(q))
+		sj, sw, sa := db.searchFilter(q)
+		join += sj
+		where = append(where, sw)
+		whereArgs = append(whereArgs, sa...)
 	}
 	if f.Status != "" {
 		where = append(where, "e.status = ?")
@@ -368,11 +382,14 @@ func (db *DB) ListEntries(userID int64, f EntryFilter) ([]*Entry, error) {
 	}
 	switch f.Due {
 	case "overdue":
-		where = append(where, "e.due IS NOT NULL AND e.due < date('now','localtime') AND e.status <> 'done'")
+		where = append(where, "e.due IS NOT NULL AND e.due < ? AND e.status <> 'done'")
+		whereArgs = append(whereArgs, today())
 	case "today":
-		where = append(where, "e.due = date('now','localtime')")
+		where = append(where, "e.due = ?")
+		whereArgs = append(whereArgs, today())
 	case "week":
-		where = append(where, "e.due IS NOT NULL AND e.due <= date('now','localtime','+7 day')")
+		where = append(where, "e.due IS NOT NULL AND e.due <= ?")
+		whereArgs = append(whereArgs, dayFromNow(7))
 	case "none":
 		where = append(where, "e.due IS NULL")
 	}
@@ -386,7 +403,7 @@ func (db *DB) ListEntries(userID int64, f EntryFilter) ([]*Entry, error) {
 	case "priority":
 		order = "e.priority DESC, e.due IS NULL, e.due ASC"
 	case "title":
-		order = "e.title COLLATE NOCASE ASC"
+		order = db.ci("e.title") + " ASC"
 	case "board":
 		order = "e.board_sort ASC, e.id ASC"
 	}
@@ -400,7 +417,7 @@ func (db *DB) ListEntries(userID int64, f EntryFilter) ([]*Entry, error) {
 		` WHERE ` + strings.Join(where, " AND ") + ` ORDER BY e.pinned DESC, ` + order + limit
 
 	args := append(joinArgs, whereArgs...)
-	rows, err := db.sql.Query(query, args...)
+	rows, err := db.qy(db.sql, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +444,7 @@ func colsFor(a string) string {
 
 func (db *DB) attachTags(entries []*Entry) ([]*Entry, error) {
 	for _, e := range entries {
-		rows, err := db.sql.Query(`SELECT t.name FROM entry_tags et JOIN tags t ON t.id = et.tag_id
+		rows, err := db.qy(db.sql, `SELECT t.name FROM entry_tags et JOIN tags t ON t.id = et.tag_id
 			WHERE et.entry_id = ? ORDER BY t.name`, e.ID)
 		if err != nil {
 			return nil, err
@@ -482,7 +499,7 @@ func (db *DB) CreateEntry(userID int64, in EntryInput) (*Entry, error) {
 	// rather than inserting a near-duplicate under a "-2" slug.
 	if title != "" {
 		var stubSlug string
-		err := tx.QueryRow(`SELECT slug FROM entries
+		err := db.row(tx, `SELECT slug FROM entries
 			WHERE user_id = ? AND lower(title) = lower(?) AND body = '' AND status = '' AND parent_id IS NULL
 			ORDER BY id LIMIT 1`, userID, title).Scan(&stubSlug)
 		if err == nil {
@@ -505,13 +522,13 @@ func (db *DB) CreateEntry(userID int64, in EntryInput) (*Entry, error) {
 	if base == "" {
 		base = "note"
 	}
-	slug, err := uniqueSlug(tx, userID, base)
+	slug, err := db.uniqueSlug(tx, userID, base)
 	if err != nil {
 		return nil, err
 	}
 
 	var projectID any
-	if pid, err := upsertProject(tx, userID, in.Project); err != nil {
+	if pid, err := db.upsertProject(tx, userID, in.Project); err != nil {
 		return nil, err
 	} else if pid != 0 {
 		projectID = pid
@@ -528,9 +545,9 @@ func (db *DB) CreateEntry(userID int64, in EntryInput) (*Entry, error) {
 	if in.Status == "done" {
 		doneAt = now()
 	}
-	nextSort, _ := columnTail(tx, userID, in.Status)
+	nextSort, _ := db.columnTail(tx, userID, in.Status)
 
-	res, err := tx.Exec(`INSERT INTO entries
+	id, err := db.ins(tx, `INSERT INTO entries
 		(user_id, slug, title, body, status, priority, due, project_id, parent_id, board_sort, pinned, created_at, updated_at, done_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		userID, slug, title, in.Body, in.Status, clampPriority(in.Priority), due, projectID, parentID,
@@ -538,15 +555,14 @@ func (db *DB) CreateEntry(userID int64, in EntryInput) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 
-	if err := syncTags(tx, userID, id, unionTags(in.Body, in.ExtraTags)); err != nil {
+	if err := db.syncTags(tx, userID, id, unionTags(in.Body, in.ExtraTags)); err != nil {
 		return nil, err
 	}
-	if err := syncLinks(tx, userID, id, in.Body); err != nil {
+	if err := db.syncLinks(tx, userID, id, in.Body); err != nil {
 		return nil, err
 	}
-	if err := syncFTS(tx, id, title, in.Body); err != nil {
+	if err := db.syncFTS(tx, id, title, in.Body); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -568,7 +584,7 @@ func (db *DB) UpdateEntry(userID, id int64, in EntryInput) (*Entry, error) {
 	defer tx.Rollback()
 
 	var cur Entry
-	err = tx.QueryRow(`SELECT slug, status FROM entries WHERE user_id = ? AND id = ?`, userID, id).
+	err = db.row(tx, `SELECT slug, status FROM entries WHERE user_id = ? AND id = ?`, userID, id).
 		Scan(&cur.Slug, &cur.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -588,7 +604,7 @@ func (db *DB) UpdateEntry(userID, id int64, in EntryInput) (*Entry, error) {
 		sets = append(sets, "done_at = NULL")
 	}
 	if in.Status != cur.Status && in.Status != "" {
-		if tail, err := columnTail(tx, userID, in.Status); err == nil {
+		if tail, err := db.columnTail(tx, userID, in.Status); err == nil {
 			sets = append(sets, "board_sort = ?")
 			args = append(args, tail)
 		}
@@ -609,7 +625,7 @@ func (db *DB) UpdateEntry(userID, id int64, in EntryInput) (*Entry, error) {
 		if in.Project == "" {
 			sets = append(sets, "project_id = NULL")
 		} else {
-			pid, err := upsertProject(tx, userID, in.Project)
+			pid, err := db.upsertProject(tx, userID, in.Project)
 			if err != nil {
 				return nil, err
 			}
@@ -619,16 +635,16 @@ func (db *DB) UpdateEntry(userID, id int64, in EntryInput) (*Entry, error) {
 	}
 
 	args = append(args, userID, id)
-	if _, err := tx.Exec(`UPDATE entries SET `+strings.Join(sets, ", ")+` WHERE user_id = ? AND id = ?`, args...); err != nil {
+	if _, err := db.ex(tx, `UPDATE entries SET `+strings.Join(sets, ", ")+` WHERE user_id = ? AND id = ?`, args...); err != nil {
 		return nil, err
 	}
-	if err := syncTags(tx, userID, id, unionTags(in.Body, in.ExtraTags)); err != nil {
+	if err := db.syncTags(tx, userID, id, unionTags(in.Body, in.ExtraTags)); err != nil {
 		return nil, err
 	}
-	if err := syncLinks(tx, userID, id, in.Body); err != nil {
+	if err := db.syncLinks(tx, userID, id, in.Body); err != nil {
 		return nil, err
 	}
-	if err := syncFTS(tx, id, title, in.Body); err != nil {
+	if err := db.syncFTS(tx, id, title, in.Body); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -652,10 +668,10 @@ func (db *DB) MoveEntry(userID, id int64, status string, beforeID int64) error {
 	var sortVal float64
 	if beforeID != 0 {
 		var before float64
-		if err := tx.QueryRow(`SELECT board_sort FROM entries WHERE user_id = ? AND id = ? AND status = ?`,
+		if err := db.row(tx, `SELECT board_sort FROM entries WHERE user_id = ? AND id = ? AND status = ?`,
 			userID, beforeID, status).Scan(&before); err == nil {
 			var prev sql.NullFloat64
-			tx.QueryRow(`SELECT MAX(board_sort) FROM entries WHERE user_id = ? AND status = ? AND board_sort < ?`,
+			db.row(tx, `SELECT MAX(board_sort) FROM entries WHERE user_id = ? AND status = ? AND board_sort < ?`,
 				userID, status, before).Scan(&prev)
 			if prev.Valid {
 				sortVal = (prev.Float64 + before) / 2
@@ -663,14 +679,14 @@ func (db *DB) MoveEntry(userID, id int64, status string, beforeID int64) error {
 				sortVal = before - 1
 			}
 		} else {
-			sortVal, _ = columnTail(tx, userID, status)
+			sortVal, _ = db.columnTail(tx, userID, status)
 		}
 	} else {
-		sortVal, _ = columnTail(tx, userID, status)
+		sortVal, _ = db.columnTail(tx, userID, status)
 	}
 
 	var curStatus string
-	if err := tx.QueryRow(`SELECT status FROM entries WHERE user_id = ? AND id = ?`, userID, id).Scan(&curStatus); err != nil {
+	if err := db.row(tx, `SELECT status FROM entries WHERE user_id = ? AND id = ?`, userID, id).Scan(&curStatus); err != nil {
 		return err
 	}
 	sets := "status = ?, board_sort = ?, updated_at = ?"
@@ -682,7 +698,7 @@ func (db *DB) MoveEntry(userID, id int64, status string, beforeID int64) error {
 		sets += ", done_at = NULL"
 	}
 	args = append(args, userID, id)
-	if _, err := tx.Exec(`UPDATE entries SET `+sets+` WHERE user_id = ? AND id = ?`, args...); err != nil {
+	if _, err := db.ex(tx, `UPDATE entries SET `+sets+` WHERE user_id = ? AND id = ?`, args...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -692,7 +708,7 @@ func (db *DB) MoveEntry(userID, id int64, status string, beforeID int64) error {
 // due date). Returns the new status.
 func (db *DB) ToggleDone(userID, id int64) (string, error) {
 	var status, due string
-	err := db.sql.QueryRow(`SELECT status, COALESCE(due,'') FROM entries WHERE user_id = ? AND id = ?`, userID, id).
+	err := db.row(db.sql, `SELECT status, COALESCE(due,'') FROM entries WHERE user_id = ? AND id = ?`, userID, id).
 		Scan(&status, &due)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
@@ -715,7 +731,7 @@ func (db *DB) ToggleDone(userID, id int64) (string, error) {
 
 // SetPinned toggles the pin flag.
 func (db *DB) SetPinned(userID, id int64, pinned bool) error {
-	_, err := db.sql.Exec(`UPDATE entries SET pinned = ?, updated_at = ? WHERE user_id = ? AND id = ?`,
+	_, err := db.ex(db.sql, `UPDATE entries SET pinned = ?, updated_at = ? WHERE user_id = ? AND id = ?`,
 		boolToInt(pinned), now(), userID, id)
 	return err
 }
@@ -728,41 +744,43 @@ func (db *DB) DeleteEntry(userID, id int64) error {
 	}
 	defer tx.Rollback()
 	var kids []int64
-	rows, _ := tx.Query(`SELECT id FROM entries WHERE user_id = ? AND (id = ? OR parent_id = ?)`, userID, id, id)
+	rows, _ := db.qy(tx, `SELECT id FROM entries WHERE user_id = ? AND (id = ? OR parent_id = ?)`, userID, id, id)
 	for rows.Next() {
 		var k int64
 		rows.Scan(&k)
 		kids = append(kids, k)
 	}
 	rows.Close()
-	if _, err := tx.Exec(`DELETE FROM entries WHERE user_id = ? AND id = ?`, userID, id); err != nil {
+	if _, err := db.ex(tx, `DELETE FROM entries WHERE user_id = ? AND id = ?`, userID, id); err != nil {
 		return err
 	}
-	for _, k := range kids {
-		tx.Exec(`DELETE FROM entry_fts WHERE rowid = ?`, k)
+	if db.d == dialectSQLite {
+		for _, k := range kids {
+			db.ex(tx, `DELETE FROM entry_fts WHERE rowid = ?`, k)
+		}
 	}
 	return tx.Commit()
 }
 
 // ---- helpers ----------------------------------------------------------
 
-func syncTags(tx *sql.Tx, userID, entryID int64, names []string) error {
-	if _, err := tx.Exec(`DELETE FROM entry_tags WHERE entry_id = ?`, entryID); err != nil {
+func (db *DB) syncTags(tx *sql.Tx, userID, entryID int64, names []string) error {
+	if _, err := db.ex(tx, `DELETE FROM entry_tags WHERE entry_id = ?`, entryID); err != nil {
 		return err
 	}
 	for _, name := range names {
 		if name == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO tags (user_id, name) VALUES (?,?)
-			ON CONFLICT(user_id, name) DO NOTHING`, userID, name); err != nil {
+		if _, err := db.ex(tx, `INSERT INTO tags (user_id, name) VALUES (?,?)
+			ON CONFLICT (user_id, name) DO NOTHING`, userID, name); err != nil {
 			return err
 		}
 		var tagID int64
-		if err := tx.QueryRow(`SELECT id FROM tags WHERE user_id = ? AND name = ?`, userID, name).Scan(&tagID); err != nil {
+		if err := db.row(tx, `SELECT id FROM tags WHERE user_id = ? AND name = ?`, userID, name).Scan(&tagID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO entry_tags (entry_id, tag_id) VALUES (?,?)`, entryID, tagID); err != nil {
+		if _, err := db.ex(tx, db.orIgnore(`INSERT OR IGNORE INTO entry_tags (entry_id, tag_id) VALUES (?,?)`), entryID, tagID); err != nil {
 			return err
 		}
 	}
@@ -771,29 +789,29 @@ func syncTags(tx *sql.Tx, userID, entryID int64, names []string) error {
 
 // syncLinks rebuilds outgoing [[wiki-link]] edges for an entry, creating stub
 // entries for targets that don't exist yet.
-func syncLinks(tx *sql.Tx, userID, entryID int64, body string) error {
-	if _, err := tx.Exec(`DELETE FROM links WHERE src_id = ?`, entryID); err != nil {
+func (db *DB) syncLinks(tx *sql.Tx, userID, entryID int64, body string) error {
+	if _, err := db.ex(tx, `DELETE FROM links WHERE src_id = ?`, entryID); err != nil {
 		return err
 	}
 	for _, target := range parse.Links(body) {
-		dstID, err := resolveOrStub(tx, userID, target)
+		dstID, err := db.resolveOrStub(tx, userID, target)
 		if err != nil {
 			return err
 		}
 		if dstID == entryID || dstID == 0 {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO links (src_id, dst_id) VALUES (?,?)`, entryID, dstID); err != nil {
+		if _, err := db.ex(tx, db.orIgnore(`INSERT OR IGNORE INTO links (src_id, dst_id) VALUES (?,?)`), entryID, dstID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func resolveOrStub(tx *sql.Tx, userID int64, title string) (int64, error) {
+func (db *DB) resolveOrStub(tx *sql.Tx, userID int64, title string) (int64, error) {
 	title = strings.TrimSpace(title)
 	var id int64
-	err := tx.QueryRow(`SELECT id FROM entries WHERE user_id = ? AND lower(title) = lower(?)
+	err := db.row(tx, `SELECT id FROM entries WHERE user_id = ? AND lower(title) = lower(?)
 		ORDER BY id LIMIT 1`, userID, title).Scan(&id)
 	if err == nil {
 		return id, nil
@@ -801,37 +819,41 @@ func resolveOrStub(tx *sql.Tx, userID int64, title string) (int64, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	slug, err := uniqueSlug(tx, userID, Slugify(title))
+	slug, err := db.uniqueSlug(tx, userID, Slugify(title))
 	if err != nil {
 		return 0, err
 	}
-	res, err := tx.Exec(`INSERT INTO entries (user_id, slug, title, body, status, created_at, updated_at)
-		VALUES (?,?,?,?,'','','')`, userID, slug, title, "")
+	newID, err := db.ins(tx, `INSERT INTO entries (user_id, slug, title, body, status, created_at, updated_at)
+		VALUES (?,?,?,?,'',?,?)`, userID, slug, title, "", now(), now())
 	if err != nil {
 		return 0, err
 	}
-	newID, _ := res.LastInsertId()
-	tx.Exec(`UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?`, now(), now(), newID)
-	syncFTS(tx, newID, title, "")
+	db.syncFTS(tx, newID, title, "")
 	return newID, nil
 }
 
-func syncFTS(tx *sql.Tx, entryID int64, title, body string) error {
-	if _, err := tx.Exec(`DELETE FROM entry_fts WHERE rowid = ?`, entryID); err != nil {
+func (db *DB) syncFTS(tx *sql.Tx, entryID int64, title, body string) error {
+	if db.d == dialectPostgres {
+		_, err := db.ex(tx, `UPDATE entries
+			SET search = to_tsvector('english', coalesce(?,'') || ' ' || coalesce(?,''))
+			WHERE id = ?`, title, body, entryID)
 		return err
 	}
-	_, err := tx.Exec(`INSERT INTO entry_fts (rowid, title, body) VALUES (?,?,?)`, entryID, title, body)
+	if _, err := db.ex(tx, `DELETE FROM entry_fts WHERE rowid = ?`, entryID); err != nil {
+		return err
+	}
+	_, err := db.ex(tx, `INSERT INTO entry_fts (rowid, title, body) VALUES (?,?,?)`, entryID, title, body)
 	return err
 }
 
-func uniqueSlug(tx *sql.Tx, userID int64, base string) (string, error) {
+func (db *DB) uniqueSlug(tx *sql.Tx, userID int64, base string) (string, error) {
 	if base == "" {
 		base = "note"
 	}
 	slug := base
 	for n := 2; ; n++ {
 		var one int
-		err := tx.QueryRow(`SELECT 1 FROM entries WHERE user_id = ? AND slug = ?`, userID, slug).Scan(&one)
+		err := db.row(tx, `SELECT 1 FROM entries WHERE user_id = ? AND slug = ?`, userID, slug).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
 			return slug, nil
 		}
@@ -842,9 +864,9 @@ func uniqueSlug(tx *sql.Tx, userID int64, base string) (string, error) {
 	}
 }
 
-func columnTail(tx *sql.Tx, userID int64, status string) (float64, error) {
+func (db *DB) columnTail(tx *sql.Tx, userID int64, status string) (float64, error) {
 	var v sql.NullFloat64
-	err := tx.QueryRow(`SELECT MAX(board_sort) FROM entries WHERE user_id = ? AND status = ?`, userID, status).Scan(&v)
+	err := db.row(tx, `SELECT MAX(board_sort) FROM entries WHERE user_id = ? AND status = ?`, userID, status).Scan(&v)
 	if err != nil {
 		return 0, err
 	}
@@ -898,8 +920,8 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// ftsQuery turns raw user input into a safe FTS5 prefix query.
-func ftsQuery(q string) string {
+// ftsMatch turns raw user input into a safe SQLite FTS5 prefix query.
+func ftsMatch(q string) string {
 	fields := strings.FieldsFunc(q, func(r rune) bool {
 		return !(r == '_' || r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
 	})

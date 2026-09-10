@@ -18,6 +18,14 @@ func hashToken(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// isUniqueViolation matches a unique-constraint error from either driver.
+func isUniqueViolation(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "UNIQUE") || // sqlite
+		strings.Contains(s, "duplicate key value") || // postgres
+		strings.Contains(s, "23505") // postgres SQLSTATE
+}
+
 // ErrNotFound is returned when a lookup matches no row.
 var ErrNotFound = errors.New("not found")
 
@@ -51,15 +59,14 @@ func (db *DB) CreateUser(email, displayName, password string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := db.sql.Exec(`INSERT INTO users (email, display_name, password_hash) VALUES (?,?,?)`,
+	id, err := db.ins(db.sql, `INSERT INTO users (email, display_name, password_hash) VALUES (?,?,?)`,
 		email, displayName, string(hash))
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			return nil, ErrEmailTaken
 		}
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 	if err := db.EnsureDefaultCalendars(id); err != nil {
 		return nil, err
 	}
@@ -73,7 +80,7 @@ func (db *DB) Authenticate(email, password string) (*User, error) {
 		u    User
 		hash string
 	)
-	err := db.sql.QueryRow(`SELECT id, email, display_name, password_hash, created_at FROM users WHERE email = ?`, email).
+	err := db.row(db.sql, `SELECT id, email, display_name, password_hash, created_at FROM users WHERE email = ?`, email).
 		Scan(&u.ID, &u.Email, &u.DisplayName, &hash, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrBadCredentials
@@ -95,7 +102,7 @@ func (db *DB) CreateSession(userID int64) (string, error) {
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	expires := time.Now().UTC().Add(sessionTTL).Format("2006-01-02 15:04:05")
-	if _, err := db.sql.Exec(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)`,
+	if _, err := db.ex(db.sql, `INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)`,
 		hashToken(token), userID, expires); err != nil {
 		return "", err
 	}
@@ -111,7 +118,7 @@ func (db *DB) UserBySession(token string) (*User, error) {
 		u       User
 		expires string
 	)
-	err := db.sql.QueryRow(`
+	err := db.row(db.sql, `
 		SELECT u.id, u.email, u.display_name, u.created_at, s.expires_at
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token = ?`, hashToken(token)).Scan(&u.ID, &u.Email, &u.DisplayName, &u.CreatedAt, &expires)
@@ -130,12 +137,12 @@ func (db *DB) UserBySession(token string) (*User, error) {
 
 // DeleteSession logs a session out. It accepts the raw token.
 func (db *DB) DeleteSession(token string) error {
-	_, err := db.sql.Exec(`DELETE FROM sessions WHERE token = ?`, hashToken(token))
+	_, err := db.ex(db.sql, `DELETE FROM sessions WHERE token = ?`, hashToken(token))
 	return err
 }
 
 // UserCount reports how many accounts exist (used to decide demo seeding).
 func (db *DB) UserCount() (int, error) {
 	var n int
-	return n, db.sql.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, db.row(db.sql, `SELECT COUNT(*) FROM users`).Scan(&n)
 }

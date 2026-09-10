@@ -27,11 +27,11 @@ var CalendarColors = []string{
 
 // Calendars lists the user's calendars in display order.
 func (db *DB) Calendars(userID int64) ([]Calendar, error) {
-	rows, err := db.sql.Query(`
+	rows, err := db.qy(db.sql, `
 		SELECT c.id, c.slug, c.name, c.color, c.kind, c.visible, c.is_default, c.source_name, c.sort,
 		       (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id)
 		FROM calendars c WHERE c.user_id = ?
-		ORDER BY c.is_default DESC, c.sort, c.name COLLATE NOCASE`, userID)
+		ORDER BY c.is_default DESC, c.sort, `+db.ci("c.name"), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (db *DB) Calendars(userID int64) ([]Calendar, error) {
 func (db *DB) CalendarByID(userID, id int64) (*Calendar, error) {
 	var c Calendar
 	var visible, isDefault int
-	err := db.sql.QueryRow(`SELECT id, slug, name, color, kind, visible, is_default, source_name, sort
+	err := db.row(db.sql, `SELECT id, slug, name, color, kind, visible, is_default, source_name, sort
 		FROM calendars WHERE user_id = ? AND id = ?`, userID, id).
 		Scan(&c.ID, &c.Slug, &c.Name, &c.Color, &c.Kind, &visible, &isDefault, &c.SourceName, &c.Sort)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -73,17 +73,17 @@ func (db *DB) CalendarByID(userID, id int64) (*Calendar, error) {
 // user if they don't exist yet. Safe to call repeatedly.
 func (db *DB) EnsureDefaultCalendars(userID int64) error {
 	var n int
-	if err := db.sql.QueryRow(`SELECT COUNT(*) FROM calendars WHERE user_id = ?`, userID).Scan(&n); err != nil {
+	if err := db.row(db.sql, `SELECT COUNT(*) FROM calendars WHERE user_id = ?`, userID).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return nil
 	}
-	if _, err := db.sql.Exec(`INSERT INTO calendars (user_id, slug, name, color, kind, is_default, sort)
+	if _, err := db.ex(db.sql, `INSERT INTO calendars (user_id, slug, name, color, kind, is_default, sort)
 		VALUES (?, 'tasks', 'Tasks', ?, 'tasks', 1, 0)`, userID, "#b8863f"); err != nil {
 		return err
 	}
-	_, err := db.sql.Exec(`INSERT INTO calendars (user_id, slug, name, color, kind, sort)
+	_, err := db.ex(db.sql, `INSERT INTO calendars (user_id, slug, name, color, kind, sort)
 		VALUES (?, 'personal', 'Personal', ?, 'events', 1)`, userID, "#3f6373")
 	return err
 }
@@ -106,18 +106,17 @@ func (db *DB) CreateCalendar(userID int64, name, color, kind, sourceName string)
 	}
 	defer tx.Rollback()
 
-	slug, err := uniqueCalendarSlug(tx, userID, Slugify(name))
+	slug, err := db.uniqueCalendarSlug(tx, userID, Slugify(name))
 	if err != nil {
 		return nil, err
 	}
 	var maxSort sql.NullInt64
-	tx.QueryRow(`SELECT MAX(sort) FROM calendars WHERE user_id = ?`, userID).Scan(&maxSort)
-	res, err := tx.Exec(`INSERT INTO calendars (user_id, slug, name, color, kind, source_name, sort)
+	db.row(tx, `SELECT MAX(sort) FROM calendars WHERE user_id = ?`, userID).Scan(&maxSort)
+	id, err := db.ins(tx, `INSERT INTO calendars (user_id, slug, name, color, kind, source_name, sort)
 		VALUES (?,?,?,?,?,?,?)`, userID, slug, name, color, kind, sourceName, maxSort.Int64+1)
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -130,14 +129,14 @@ func (db *DB) UpdateCalendar(userID, id int64, name, color string) error {
 	if name == "" {
 		return errors.New("name required")
 	}
-	_, err := db.sql.Exec(`UPDATE calendars SET name = ?, color = ? WHERE user_id = ? AND id = ?`,
+	_, err := db.ex(db.sql, `UPDATE calendars SET name = ?, color = ? WHERE user_id = ? AND id = ?`,
 		name, color, userID, id)
 	return err
 }
 
 // SetCalendarVisible toggles a calendar's visibility on the composite view.
 func (db *DB) SetCalendarVisible(userID, id int64, visible bool) error {
-	_, err := db.sql.Exec(`UPDATE calendars SET visible = ? WHERE user_id = ? AND id = ?`,
+	_, err := db.ex(db.sql, `UPDATE calendars SET visible = ? WHERE user_id = ? AND id = ?`,
 		boolToInt(visible), userID, id)
 	return err
 }
@@ -146,7 +145,7 @@ func (db *DB) SetCalendarVisible(userID, id int64, visible bool) error {
 // cannot be deleted.
 func (db *DB) DeleteCalendar(userID, id int64) error {
 	var isDefault int
-	err := db.sql.QueryRow(`SELECT is_default FROM calendars WHERE user_id = ? AND id = ?`, userID, id).Scan(&isDefault)
+	err := db.row(db.sql, `SELECT is_default FROM calendars WHERE user_id = ? AND id = ?`, userID, id).Scan(&isDefault)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -156,18 +155,18 @@ func (db *DB) DeleteCalendar(userID, id int64) error {
 	if isDefault != 0 {
 		return errors.New("the Tasks calendar can't be deleted")
 	}
-	_, err = db.sql.Exec(`DELETE FROM calendars WHERE user_id = ? AND id = ?`, userID, id)
+	_, err = db.ex(db.sql, `DELETE FROM calendars WHERE user_id = ? AND id = ?`, userID, id)
 	return err
 }
 
-func uniqueCalendarSlug(tx *sql.Tx, userID int64, base string) (string, error) {
+func (db *DB) uniqueCalendarSlug(tx *sql.Tx, userID int64, base string) (string, error) {
 	if base == "" {
 		base = "calendar"
 	}
 	slug := base
 	for n := 2; ; n++ {
 		var one int
-		err := tx.QueryRow(`SELECT 1 FROM calendars WHERE user_id = ? AND slug = ?`, userID, slug).Scan(&one)
+		err := db.row(tx, `SELECT 1 FROM calendars WHERE user_id = ? AND slug = ?`, userID, slug).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
 			return slug, nil
 		}
